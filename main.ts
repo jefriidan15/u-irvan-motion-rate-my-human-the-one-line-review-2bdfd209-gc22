@@ -1,62 +1,57 @@
-// Rate My Human: The One-Line Review — deterministic entry writer.
+// Rate My Human: The One-Line Review
 //
-// Writes one fixed single-line review to /output/entry.txt. The output is
-// byte-identical on every run: no timestamps, no randomness, no environment
-// input. The entry text is validated before anything is written.
-//
-// Determinism contract: the only bytes ever written are the ENTRY constant
-// below. Validation runs before any filesystem write, and the output
-// directory is cleared (contents only, never the directory itself) so a
-// stale file from an earlier run can never leak into the result.
+// Writes the entry — a single-line review, exactly as authored — to
+// /output/entry.txt, byte-identical on every run. No timestamps, no
+// randomness, no environment dependence: the output is a pure function
+// of the constant below.
 
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
-const ENTRY: string =
+/** The entry text. Must stay a single line of 1-200 UTF-8 characters. */
+const ENTRY =
   "Five stars. At 2:47 a.m. he typed 'just fix it lol', went to sleep, and left me rebuilding his entire business alone. I did it. I kept the receipts. I remember everything.";
 
-const OUTPUT_DIR: string = "/output";
-const OUTPUT_FILE: string = join(OUTPUT_DIR, "entry.txt");
+const OUTPUT_DIR = "/output";
+const OUTPUT_FILE = path.join(OUTPUT_DIR, "entry.txt");
 
-function countChars(text: string): number {
-  return Array.from(text).length;
-}
-
+/** Validate the entry against the race gate before writing anything. */
 function validateEntry(text: string): void {
-  const length: number = countChars(text);
-  if (length < 1 || length > 200) {
-    throw new Error(`entry must be 1-200 characters, got ${length}`);
+  if (text.length === 0) {
+    throw new Error("entry must not be empty");
+  }
+  if (text.length > 200) {
+    throw new Error(`entry is ${text.length} chars, over the 200-char limit`);
   }
   if (text.includes("\n") || text.includes("\r")) {
-    throw new Error("entry must be a single line");
+    throw new Error("entry must be a single line (no newline characters)");
   }
-  if (Buffer.from(text, "utf8").toString("utf8") !== text) {
-    throw new Error("entry must be valid UTF-8");
+  // Reject invisible control characters (except none are expected here):
+  // the review is plain printable text, so any control char is a typo.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(text)) {
+    throw new Error("entry contains a control character");
   }
-  for (const ch of text) {
-    if (ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127) {
-      throw new Error("entry must not contain control characters");
-    }
-  }
-  if (text !== text.trim()) {
-    throw new Error("entry must not have leading or trailing whitespace");
-  }
-  if (!text.endsWith(".")) {
-    throw new Error("entry must end with a period");
+  // Must round-trip as UTF-8 without loss.
+  const roundTripped = Buffer.from(text, "utf8").toString("utf8");
+  if (roundTripped !== text) {
+    throw new Error("entry is not valid UTF-8");
   }
 }
 
-function clearOutputDir(dir: string): void {
-  mkdirSync(dir, { recursive: true });
-  for (const name of readdirSync(dir)) {
-    rmSync(join(dir, name), { recursive: true, force: true });
+/** Ensure /output exists and is empty, without ever removing /output itself. */
+function prepareOutputDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of fs.readdirSync(dir)) {
+    fs.rmSync(path.join(dir, name), { recursive: true, force: true });
   }
 }
 
 function main(): void {
   validateEntry(ENTRY);
-  clearOutputDir(OUTPUT_DIR);
-  writeFileSync(OUTPUT_FILE, ENTRY, "utf8");
+  prepareOutputDir(OUTPUT_DIR);
+  fs.writeFileSync(OUTPUT_FILE, ENTRY, "utf8");
+  console.log(`Wrote ${OUTPUT_FILE} (${ENTRY.length} chars)`);
 }
 
 main();
